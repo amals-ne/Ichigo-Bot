@@ -9,7 +9,7 @@ app.listen(PORT, () => console.log(`Ping server running on port ${PORT}`));
 // --- 1. LOAD ENVIRONMENT VARIABLES ---
 require('dotenv').config();
 
-// --- 2. IMPORT DISCORD.JS ---
+// --- 2. IMPORT DISCORD.JS & VOICE ---
 const { 
     Client, 
     GatewayIntentBits, 
@@ -19,6 +19,7 @@ const {
     ApplicationCommandOptionType,
     ActivityType
 } = require('discord.js');
+const { joinVoiceChannel, entersState, VoiceConnectionStatus } = require('@discordjs/voice');
 
 // --- 3. BOT CONFIGURATION AND CLIENT INITIALIZATION ---
 const client = new Client({
@@ -62,18 +63,31 @@ const commands = [
             { name: 'message', description: 'The content of the announcement.', type: ApplicationCommandOptionType.String, required: true },
         ],
     },
+    {
+        name: 'online',
+        description: 'Connect bot to a voice channel as muted/deafened.',
+        default_member_permissions: '8',
+        options: [
+            {
+                name: 'connect',
+                description: 'Voice channel to join',
+                type: ApplicationCommandOptionType.Channel,
+                required: true,
+            },
+        ],
+    },
 ];
 
 // --- 7. REGISTER COMMANDS ---
 async function registerCommands() {
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
-        console.log('Started refreshing application (/) commands.');
+        console.log('Refreshing application (/) commands.');
         await rest.put(
             Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, process.env.DISCORD_GUILD_ID),
             { body: commands },
         );
-        console.log('Successfully reloaded application (/) commands for the guild.');
+        console.log('Commands registered successfully.');
     } catch (error) {
         console.error('Failed to register commands:', error);
     }
@@ -97,6 +111,7 @@ client.on('interactionCreate', async interaction => {
     }
     const { commandName } = interaction;
 
+    // --- /linkblock ---
     if (commandName === 'linkblock') {
         const reason = interaction.options.getString('reason');
         const channelId = interaction.channelId;
@@ -111,6 +126,7 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ embeds: [confirmationEmbed] });
     }
 
+    // --- /broadcast ---
     if (commandName === 'broadcast') {
         const targetChannel = interaction.options.getChannel('channel');
         const messageContent = interaction.options.getString('message');
@@ -131,6 +147,29 @@ client.on('interactionCreate', async interaction => {
             await interaction.reply({ content: `❌ Could not send broadcast. Check bot permissions.`, ephemeral: true });
         }
     }
+
+    // --- /online connect ---
+    if (commandName === 'online') {
+        const vcChannel = interaction.options.getChannel('connect');
+        if (!vcChannel || vcChannel.type !== 2) {
+            return interaction.reply({ content: '🚫 Select a valid voice channel.', ephemeral: true });
+        }
+
+        try {
+            const connection = joinVoiceChannel({
+                channelId: vcChannel.id,
+                guildId: vcChannel.guild.id,
+                adapterCreator: vcChannel.guild.voiceAdapterCreator,
+                selfMute: true,
+                selfDeaf: true,
+            });
+            entersState(connection, VoiceConnectionStatus.Ready, 30_000);
+            await interaction.reply({ content: `✅ Connected to ${vcChannel.name} as muted/deafened.`, ephemeral: true });
+        } catch (err) {
+            console.error('Voice connection failed:', err);
+            await interaction.reply({ content: '❌ Failed to connect to VC.', ephemeral: true });
+        }
+    }
 });
 
 // --- 10. MESSAGE HANDLER (LINK DELETION) ---
@@ -140,7 +179,7 @@ client.on('messageCreate', async (message) => {
     const customReason = linkBlockedChannels[channelId];
 
     if (customReason && containsLink(message.content)) {
-        try { await message.delete(); } catch (err) { return; }
+        try { await message.delete(); } catch { return; }
 
         const warningEmbed = new EmbedBuilder()
             .setColor('#FF0000')
