@@ -9,10 +9,11 @@
   "keywords": [],
   "author": "Amal s",
   "license": "ISC",
-  "description": "Ichigo Discord bot",
+  "description": "Ichigo Discord bot with link blocker, broadcast, VC connect, and uptime ping server",
   "dependencies": {
     "discord.js": "^14.23.2",
     "dotenv": "^17.2.3",
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "@discordjs/voice": "^0.16.0"
   }
 }
