@@ -2,7 +2,7 @@
 const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
-const HOST = '0.0.0.0'; // <<< CRITICAL FIX: Ensures Render's proxy can access the service
+const HOST = '0.0.0.0'; // <<< CRITICAL FIX for 502: Ensures Render's proxy can access the service
 
 app.get('/', (req, res) => res.send('Ichigo is online!'));
 // Now listening on the correct PORT and HOST
@@ -277,17 +277,20 @@ client.on('messageCreate', async (message) => {
     // If link blocking is not active, stop here
     if (!customReason) return;
 
-    // --- BYPASS CHECK FOR GIFS/MEDIA (Fixes GIF/Sticker deletion) ---
-    // If the message contains an attachment, a sticker, or any embed, bypass the link check.
-    const isMedia = message.attachments.size > 0 || message.stickers.size > 0 || message.embeds.some(embed => embed.type === 'image' || embed.type === 'gifv');
+    // --- CRITICAL FIX: BYPASS CHECK FOR ALL MEDIA AND PREVIEWS (Includes GIFs) ---
+    // A message should be ignored if it contains:
+    // 1. Any attachments (uploaded files/images/GIFs)
+    // 2. Any stickers
+    // 3. Any embeds (Discord-generated previews for links, including GIF/media link previews)
+    const isMediaOrPreview = message.attachments.size > 0 || message.stickers.size > 0 || message.embeds.length > 0;
     
-    // If the message has no text content (just media) OR it contains media, ignore it.
-    if (message.content.length === 0 || isMedia) {
+    // If Discord generated a preview/embed for this message (like a GIF), we ignore it.
+    if (isMediaOrPreview) {
         return;
     }
     // --- END BYPASS LOGIC ---
 
-    // 2. Check for links in the remaining messages (which are text-based or have only link content)
+    // 2. Check for links in the remaining messages (which are pure text or raw, non-previewing URLs)
     if (containsLink(message.content)) {
         try { 
             await message.delete(); 
