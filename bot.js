@@ -2,9 +2,11 @@
 const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
+const HOST = '0.0.0.0'; // <<< CRITICAL FIX: Ensures Render's proxy can access the service
 
 app.get('/', (req, res) => res.send('Ichigo is online!'));
-app.listen(PORT, () => console.log(`Ping server running on port ${PORT}`));
+// Now listening on the correct PORT and HOST
+app.listen(PORT, HOST, () => console.log(`Ping server running on http://${HOST}:${PORT}`));
 
 // --- 1. LOAD ENVIRONMENT VARIABLES ---
 require('dotenv').config();
@@ -94,7 +96,6 @@ async function registerCommands() {
     try {
         console.log('Refreshing application (/) commands.');
         // NOTE: Only register to a specific guild for faster startup during development.
-        // For production, you may want to use Routes.applicationCommands
         await rest.put(
             Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, process.env.DISCORD_GUILD_ID),
             { body: commands },
