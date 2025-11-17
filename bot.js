@@ -26,6 +26,9 @@ const {
     ApplicationCommandOptionType,
     ActivityType,
     PermissionFlagsBits,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
 } = require('discord.js');
 const { 
     joinVoiceChannel, 
@@ -65,7 +68,7 @@ async function logToDiscord(title, description, color) {
         .setTitle(title)
         .setDescription(`\`\`\`\n${description.substring(0, 4000)}\n\`\`\``)
         .setTimestamp()
-        .setFooter({ text: client.user.tag });
+        .setFooter({ text: client.user.tag, iconURL: client.user.displayAvatarURL() });
 
     try {
         const channel = client.channels.cache.get(LOG_CHANNEL_ID) || await client.channels.fetch(LOG_CHANNEL_ID); 
@@ -184,7 +187,7 @@ client.once(Events.ClientReady, () => {
 
     registerCommands();
     client.user.setPresence({
-        activities: [{ name: 'for rule breakers!🛠️', type: ActivityType.Watching }],
+        activities: [{ name: 'for rule breakers! 🛠️', type: ActivityType.Watching }],
         status: 'dnd',
     });
 
@@ -222,21 +225,49 @@ client.on(Events.InteractionCreate, async interaction => {
         const isModCommand = ['linkblock', 'broadcast', 'online'].includes(interaction.commandName);
         if (isModCommand && !interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
             // FIX: Using interaction.reply() here is fine as it's an immediate response.
-            return interaction.reply({ content: '🚫 You must have Administrator permissions to use this command.', ephemeral: true });
+            const errorEmbed = new EmbedBuilder()
+                .setColor('#FF4444')
+                .setTitle('🚫 Permission Denied')
+                .setDescription('You must have **Administrator** permissions to use this command.')
+                .setThumbnail('https://cdn.discordapp.com/emojis/994444412779126865.gif?size=96&quality=lossless')
+                .setFooter({ text: 'Command Execution Failed', iconURL: client.user.displayAvatarURL() })
+                .setTimestamp();
+
+            return interaction.reply({ embeds: [errorEmbed], ephemeral: true });
         }
         
         // --- /ping --- (Fast command, no deferral needed)
         if (commandName === 'ping') {
             const latency = Date.now() - interaction.createdTimestamp;
             const apiLatency = client.ws.ping;
+            const status = apiLatency < 150 ? '🟢 Excellent' : apiLatency < 300 ? '🟡 Good' : '🔴 Poor';
 
             const pingEmbed = new EmbedBuilder()
-                .setColor('#0099ff')
-                .setTitle('Pong! 🏓')
-                .setDescription(`**Latency:** ${latency}ms\n**API Latency:** ${apiLatency}ms`)
+                .setColor(apiLatency < 150 ? '#22C55E' : apiLatency < 300 ? '#F59E0B' : '#EF4444')
+                .setTitle('🏓 Pong!')
+                .setDescription(`**Connection Status:** ${status}`)
+                .addFields(
+                    { name: '🤖 Bot Latency', value: `\`${latency}ms\``, inline: true },
+                    { name: '📡 API Latency', value: `\`${apiLatency}ms\``, inline: true },
+                    { name: '🕒 Uptime', value: `<t:${Math.floor((Date.now() - client.uptime) / 1000)}:R>`, inline: true }
+                )
+                .setThumbnail('https://cdn.discordapp.com/emojis/992823455538544670.gif?size=96&quality=lossless')
+                .setFooter({ text: `Requested by ${interaction.user.tag}`, iconURL: interaction.user.displayAvatarURL() })
                 .setTimestamp();
 
-            await interaction.reply({ embeds: [pingEmbed], ephemeral: false });
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setLabel('Support Server')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL('https://discord.gg/your-server'),
+                    new ButtonBuilder()
+                        .setLabel('Invite Bot')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL('https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID')
+                );
+
+            await interaction.reply({ embeds: [pingEmbed], components: [row], ephemeral: false });
         }
 
         // --- /linkblock --- (Fast command, no deferral needed)
@@ -246,34 +277,80 @@ client.on(Events.InteractionCreate, async interaction => {
             linkBlockedChannels[channelId] = reason;
 
             const confirmationEmbed = new EmbedBuilder()
-                .setColor('#FFA500')
-                .setTitle('🔗 Link Blocker Activated')
-                .setDescription(`All links are now blocked in this channel: <#${channelId}>.\n\n**Custom Warning Message Set:**\n>>> ${reason}`)
-                .setFooter({ text: 'The bot will now automatically delete links posted here.' });
+                .setColor('#F59E0B')
+                .setTitle('🛡️ Link Blocker Activated')
+                .setDescription(`**Channel Protection Enabled**\n<#${channelId}> is now secured against unauthorized links.`)
+                .addFields(
+                    { name: '🔒 Protection Status', value: '```🟢 ACTIVE```', inline: true },
+                    { name: '👮 Moderator', value: `\`${interaction.user.tag}\``, inline: true },
+                    { name: '📝 Custom Message', value: `>>> ${reason}` }
+                )
+                .setThumbnail('https://cdn.discordapp.com/emojis/992823453267918898.gif?size=96&quality=lossless')
+                .setFooter({ text: 'Links will be automatically deleted', iconURL: client.user.displayAvatarURL() })
+                .setTimestamp();
 
-            await interaction.reply({ embeds: [confirmationEmbed] });
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('disable_linkblock')
+                        .setLabel('Disable Protection')
+                        .setStyle(ButtonStyle.Danger)
+                        .setEmoji('❌')
+                );
+
+            await interaction.reply({ embeds: [confirmationEmbed], components: [row] });
         }
 
         // --- /broadcast --- (Relatively fast, no deferral needed)
         if (commandName === 'broadcast') {
             const targetChannel = interaction.options.getChannel('channel');
             const messageContent = interaction.options.getString('message');
-            if (!targetChannel.isTextBased()) return interaction.reply({ content: '🚫 Please select a valid text channel.', ephemeral: true });
+            if (!targetChannel.isTextBased()) {
+                const errorEmbed = new EmbedBuilder()
+                    .setColor('#FF4444')
+                    .setTitle('❌ Invalid Channel')
+                    .setDescription('Please select a valid text channel for the broadcast.')
+                    .setThumbnail('https://cdn.discordapp.com/emojis/994444412779126865.gif?size=96&quality=lossless');
+
+                return interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+            }
 
             const broadcastEmbed = new EmbedBuilder()
-                .setColor('#3498db')
-                .setTitle('📣 Broadcast Message (Mods)')
-                .setDescription(`**${messageContent}**`)
-                .setTimestamp()
-                .setFooter({ text: `Announcement posted by Moderator: ${interaction.user.tag}` });
+                .setColor('#3B82F6')
+                .setTitle('📢 Official Announcement')
+                .setDescription(messageContent)
+                .addFields(
+                    { name: '📅 Announcement Date', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                    { name: '👤 Posted By', value: `\`${interaction.user.tag}\``, inline: true }
+                )
+                .setThumbnail('https://cdn.discordapp.com/emojis/992823454910148698.gif?size=96&quality=lossless')
+                .setImage('https://cdn.discordapp.com/attachments/1063273368487469097/1063273368487469097/announcement-banner.png')
+                .setFooter({ text: 'Important Announcement • Please read carefully', iconURL: interaction.guild.iconURL() })
+                .setTimestamp();
 
             try {
                 await targetChannel.send({ content: '@everyone', embeds: [broadcastEmbed] });
-                await interaction.reply({ content: `✅ Broadcast sent successfully to ${targetChannel}!`, ephemeral: true });
+                
+                const successEmbed = new EmbedBuilder()
+                    .setColor('#22C55E')
+                    .setTitle('✅ Broadcast Sent')
+                    .setDescription(`Successfully delivered announcement to ${targetChannel}`)
+                    .setThumbnail('https://cdn.discordapp.com/emojis/992823455538544670.gif?size=96&quality=lossless')
+                    .setFooter({ text: 'Broadcast System', iconURL: client.user.displayAvatarURL() })
+                    .setTimestamp();
+
+                await interaction.reply({ embeds: [successEmbed], ephemeral: true });
             } catch (error) {
                 console.error(`Could not send broadcast:`, error);
                 logToDiscord('❌ Broadcast Error', `Failed to send broadcast message.\nError: ${error.message}\nStack: ${error.stack}`, '#FF4500');
-                await interaction.reply({ content: `❌ Could not send broadcast. Check bot permissions.`, ephemeral: true });
+                
+                const errorEmbed = new EmbedBuilder()
+                    .setColor('#FF4444')
+                    .setTitle('❌ Broadcast Failed')
+                    .setDescription('Could not send broadcast. Please check bot permissions in the target channel.')
+                    .setThumbnail('https://cdn.discordapp.com/emojis/994444412779126865.gif?size=96&quality=lossless');
+
+                await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
             }
         }
 
@@ -282,8 +359,13 @@ client.on(Events.InteractionCreate, async interaction => {
             const vcChannel = interaction.options.getChannel('connect');
             // Channel type 2 is a Voice Channel (now deprecated, but 2 still works for now)
             if (!vcChannel || vcChannel.type !== 2) {
-                // FIX: If the channel is invalid, reply immediately (no deferral needed yet).
-                return interaction.reply({ content: '🚫 Select a valid voice channel.', ephemeral: true });
+                const errorEmbed = new EmbedBuilder()
+                    .setColor('#FF4444')
+                    .setTitle('❌ Invalid Channel')
+                    .setDescription('Please select a valid voice channel to connect to.')
+                    .setThumbnail('https://cdn.discordapp.com/emojis/994444412779126865.gif?size=96&quality=lossless');
+
+                return interaction.reply({ embeds: [errorEmbed], ephemeral: true });
             }
 
             // FIX: Defer reply placed immediately before the slow join operation.
@@ -304,8 +386,21 @@ client.on(Events.InteractionCreate, async interaction => {
 
                 await entersState(connection, VoiceConnectionStatus.Ready, 30_000); 
 
+                const successEmbed = new EmbedBuilder()
+                    .setColor('#22C55E')
+                    .setTitle('🔊 Voice Connection Established')
+                    .setDescription(`Successfully connected to **${vcChannel.name}**`)
+                    .addFields(
+                        { name: '🔇 Status', value: '```🟢 CONNECTED```', inline: true },
+                        { name: '🎤 Microphone', value: '`MUTED`', inline: true },
+                        { name: '🔊 Sound', value: '`DEAFENED`', inline: true }
+                    )
+                    .setThumbnail('https://cdn.discordapp.com/emojis/992823455538544670.gif?size=96&quality=lossless')
+                    .setFooter({ text: 'Voice Channel Manager', iconURL: client.user.displayAvatarURL() })
+                    .setTimestamp();
+
                 // FIX: Use editReply() after deferring!
-                await interaction.editReply({ content: `✅ Connected to **${vcChannel.name}** as muted/deafened. **(Connection Stabilized)**` });
+                await interaction.editReply({ embeds: [successEmbed] });
                 
                 // Handle disconnections gracefully
                 connection.on(VoiceConnectionStatus.Disconnected, async () => {
@@ -327,8 +422,17 @@ client.on(Events.InteractionCreate, async interaction => {
                 console.error('Voice connection failed:', err);
                 logToDiscord('🔴 VC Connection Failed', `Command: /online connect\nError: ${err.message}\nStack: ${err.stack}`, '#FF0000');
                 
+                const errorEmbed = new EmbedBuilder()
+                    .setColor('#FF4444')
+                    .setTitle('❌ Connection Failed')
+                    .setDescription('Failed to connect to the voice channel. Please check permissions and try again.')
+                    .addFields(
+                        { name: '🔧 Troubleshooting', value: '• Check bot permissions\n• Ensure channel is not full\n• Verify voice channel accessibility' }
+                    )
+                    .setThumbnail('https://cdn.discordapp.com/emojis/994444412779126865.gif?size=96&quality=lossless');
+
                 // FIX: Use editReply() for error message after deferring!
-                await interaction.editReply({ content: '❌ Failed to connect to VC. **HINT: The environment or permissions may be incorrect.**' });
+                await interaction.editReply({ embeds: [errorEmbed] });
             }
         }
     } catch (error) {
@@ -336,16 +440,24 @@ client.on(Events.InteractionCreate, async interaction => {
         console.error('❌ CRITICAL ERROR IN INTERACTION HANDLER:', error);
         logToDiscord('❌ INTERACTION HANDLER CRASH', `Command failed.\nError: ${error.message}\nStack: ${error.stack}`, '#8B0000');
         
+        const errorEmbed = new EmbedBuilder()
+            .setColor('#8B0000')
+            .setTitle('💥 Critical Error')
+            .setDescription('An unexpected error occurred while processing this command.')
+            .setFooter({ text: 'Please contact support if this persists', iconURL: client.user.displayAvatarURL() })
+            .setTimestamp();
+
         // This block tries to send a reply if none was sent or deferred previously.
         if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({ content: '❌ An unexpected error occurred while processing this command.', ephemeral: true }).catch(e => console.error('Failed to send error reply:', e));
+            await interaction.reply({ embeds: [errorEmbed], ephemeral: true }).catch(e => console.error('Failed to send error reply:', e));
+        } else if (interaction.deferred) {
+            await interaction.editReply({ embeds: [errorEmbed] }).catch(e => console.error('Failed to edit error reply:', e));
         }
-        // If it was deferred but failed later, the main try/catch handles the editReply failure.
     }
 });
 
 // --- 11. MESSAGE HANDLER (LINK DELETION) ---
-// This section remains unchanged (it's correct)
+// Enhanced with beautiful UI
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.inGuild()) return;
     const channelId = message.channel.id;
@@ -371,14 +483,23 @@ client.on('messageCreate', async (message) => {
         }
 
         const warningEmbed = new EmbedBuilder()
-            .setColor('#FF0000')
-            .setTitle('⛔ WARNING: Link Deletion')
-            .setDescription(`**❌ Link Posting Violation ❌**\n<@${message.author.id}>, do not post links in this channel!\n\n**Channel Note:**\n>>> ${customReason}\n*This warning will self-delete in 5 seconds.*`)
-            .setAuthor({ name: message.author.tag, iconURL: message.author.displayAvatarURL() })
+            .setColor('#EF4444')
+            .setTitle('🚫 Link Detected & Removed')
+            .setDescription(`**Security System Activated**\nUnauthorized link posting detected and automatically removed.`)
+            .addFields(
+                { name: '👤 User', value: `${message.author} (\`${message.author.tag}\`)`, inline: true },
+                { name: '📌 Channel', value: `${message.channel}`, inline: true },
+                { name: '📝 Channel Rules', value: `>>> ${customReason}` }
+            )
+            .setThumbnail('https://cdn.discordapp.com/emojis/992823453267918898.gif?size=96&quality=lossless')
+            .setFooter({ text: 'Automated Security System • This message will self-destruct', iconURL: client.user.displayAvatarURL() })
             .setTimestamp();
 
         try {
-            const warningMessage = await message.channel.send({ content: `<@${message.author.id}>`, embeds: [warningEmbed] });
+            const warningMessage = await message.channel.send({ 
+                content: `${message.author}`,
+                embeds: [warningEmbed] 
+            });
             setTimeout(() => warningMessage.delete().catch(err => console.error('Failed to delete warning message:', err)), 5000);
         } catch (error) {
             console.error(`Failed to send warning:`, error);
@@ -386,5 +507,39 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// --- 12. CLIENT LOGIN ---
+// --- 12. BUTTON INTERACTIONS ---
+client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isButton()) return;
+
+    if (interaction.customId === 'disable_linkblock') {
+        if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
+            const errorEmbed = new EmbedBuilder()
+                .setColor('#FF4444')
+                .setTitle('🚫 Permission Denied')
+                .setDescription('Only administrators can disable link protection.')
+                .setThumbnail('https://cdn.discordapp.com/emojis/994444412779126865.gif?size=96&quality=lossless');
+
+            return interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+        }
+
+        delete linkBlockedChannels[interaction.channelId];
+
+        const successEmbed = new EmbedBuilder()
+            .setColor('#22C55E')
+            .setTitle('🛡️ Protection Disabled')
+            .setDescription('Link blocking has been **disabled** for this channel.')
+            .addFields(
+                { name: '🔓 Status', value: '```🔴 INACTIVE```', inline: true },
+                { name: '👮 Moderator', value: `\`${interaction.user.tag}\``, inline: true }
+            )
+            .setThumbnail('https://cdn.discordapp.com/emojis/992823455538544670.gif?size=96&quality=lossless')
+            .setFooter({ text: 'Channel protection disabled', iconURL: client.user.displayAvatarURL() })
+            .setTimestamp();
+
+        await interaction.reply({ embeds: [successEmbed] });
+        await interaction.message.edit({ components: [] });
+    }
+});
+
+// --- 13. CLIENT LOGIN ---
 client.login(process.env.DISCORD_TOKEN);
