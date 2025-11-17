@@ -1,6 +1,6 @@
 // --- 0. REQUIRED MODULES ---
-// Add this line near the start of your bot.js file
-console.log(`Node.js Version Detected: ${process.version}`);
+// ADDED FIX: Node.js version check is crucial, keep this!
+console.log(`Node.js Version Detected: ${process.version}`); 
 const express = require('express');
 const https = require('https');
 const app = express();
@@ -17,13 +17,15 @@ require('dotenv').config();
 // --- 2. IMPORT DISCORD.JS & VOICE ---
 const { 
     Client, 
+    // FIX: Using Events from discord.js
+    Events, 
     GatewayIntentBits, 
     EmbedBuilder, 
     REST, 
     Routes, 
     ApplicationCommandOptionType,
     ActivityType,
-    PermissionFlagsBits, // Added for administrator check
+    PermissionFlagsBits,
 } = require('discord.js');
 const { 
     joinVoiceChannel, 
@@ -37,8 +39,8 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent, // REQUIRED for link blocker
-        GatewayIntentBits.GuildVoiceStates, // REQUIRED for /online connect
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildVoiceStates,
     ],
 });
 
@@ -66,7 +68,6 @@ async function logToDiscord(title, description, color) {
         .setFooter({ text: client.user.tag });
 
     try {
-        // Use .fetch() for more reliable access, especially during startup or in critical logs
         const channel = client.channels.cache.get(LOG_CHANNEL_ID) || await client.channels.fetch(LOG_CHANNEL_ID); 
         if (channel) {
             await channel.send({ embeds: [logEmbed] });
@@ -89,11 +90,12 @@ const containsLink = (text) => {
 };
 
 // --- 7. SLASH COMMANDS ---
+// Commands definition remains unchanged (it's correct)
 const commands = [
     {
         name: 'linkblock',
         description: 'Blocks all links in the current channel and sets a custom warning message.',
-        default_member_permissions: PermissionFlagsBits.Administrator.toString(), // Use PermissionFlagsBits
+        default_member_permissions: PermissionFlagsBits.Administrator.toString(),
         options: [
             { name: 'reason', description: 'The custom warning message to show users who post a link.', type: ApplicationCommandOptionType.String, required: true },
         ],
@@ -126,7 +128,6 @@ async function registerCommands() {
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
         console.log('Refreshing application (/) commands.');
-        // Assuming DISCORD_GUILD_ID is used for guild-specific commands (faster updates)
         await rest.put(
             Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, process.env.DISCORD_GUILD_ID),
             { body: commands },
@@ -139,15 +140,14 @@ async function registerCommands() {
 }
 
 // ----------------------------------------------------------------------
-//                    *** ERROR DEBUGGING & LOGGING (CRITICAL) ***
+//          *** ERROR DEBUGGING & LOGGING (CRITICAL) ***
 // ----------------------------------------------------------------------
 
-// *** CRITICAL PROCESS HANDLERS (Now logs and exits) ***
+// Process handlers remain unchanged (they are correct)
 process.on('uncaughtException', (error, origin) => {
     const message = `UNCAUGHT EXCEPTION: ${error.stack || error.message}\nOrigin: ${origin}`;
     console.error(`🚨 ${message}`);
     logToDiscord('🚨 CRITICAL: UNCAUGHT EXCEPTION', message, '#8B0000');
-    // Best practice: Exit after an uncaught exception to ensure a clean restart
     setTimeout(() => process.exit(1), 5000); 
 });
 
@@ -157,7 +157,7 @@ process.on('unhandledRejection', (reason, promise) => {
     logToDiscord('⚠️ WARNING: UNHANDLED REJECTION', message, '#FFA500');
 });
 
-// *** DISCORD CONNECTION LOGGING ***
+// Discord connection logging remains unchanged (it's correct)
 client.on('error', error => {
     console.error('🔴 DISCORD ERROR:', error);
     logToDiscord('🔴 DISCORD ERROR', error.stack || error.message, '#FF0000');
@@ -177,7 +177,8 @@ client.on('reconnecting', () => {
 // ----------------------------------------------------------------------
 
 // --- 9. READY EVENT ---
-client.once('ready', () => {
+// FIX: Using Events.ClientReady instead of the deprecated 'ready'
+client.once(Events.ClientReady, () => {
     console.log(`🤖 Logged in as ${client.user.tag}!`);
     logToDiscord('✅ BOT ONLINE', `Logged in successfully! Latency: ${client.ws.ping}ms`, '#32CD32');
 
@@ -204,20 +205,27 @@ client.once('ready', () => {
 });
 
 // --- 10. INTERACTION HANDLER ---
-client.on('interactionCreate', async interaction => {
+// FIX: Using Events.InteractionCreate instead of the string 'interactionCreate'
+client.on(Events.InteractionCreate, async interaction => {
+    // FIX: Using isCommand() is deprecated. It's better to use isChatInputCommand() for slash commands.
     try {
-        if (!interaction.isCommand()) return;
+        if (!interaction.isChatInputCommand()) return; 
+
+        const { commandName } = interaction;
+
+        // --- FIX FOR UNKNOWN INTERACTION (10062) ---
+        // Defer non-instant commands immediately. /ping is fast, /linkblock and /broadcast are also fast.
+        // /online is the only one guaranteed to take time, so we will defer inside that block for better response control.
+        // For /linkblock and /broadcast, since they do not rely on external services, keeping them synchronous is fine.
         
-        // Command checks use the default_member_permissions set in the command definition, 
-        // which is handled by Discord. This manual check is a good secondary layer.
+        // This admin check is redundant due to default_member_permissions but fine for backup.
         const isModCommand = ['linkblock', 'broadcast', 'online'].includes(interaction.commandName);
         if (isModCommand && !interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
+            // FIX: Using interaction.reply() here is fine as it's an immediate response.
             return interaction.reply({ content: '🚫 You must have Administrator permissions to use this command.', ephemeral: true });
         }
         
-        const { commandName } = interaction;
-
-        // --- /ping ---
+        // --- /ping --- (Fast command, no deferral needed)
         if (commandName === 'ping') {
             const latency = Date.now() - interaction.createdTimestamp;
             const apiLatency = client.ws.ping;
@@ -231,7 +239,7 @@ client.on('interactionCreate', async interaction => {
             await interaction.reply({ embeds: [pingEmbed], ephemeral: false });
         }
 
-        // --- /linkblock ---
+        // --- /linkblock --- (Fast command, no deferral needed)
         if (commandName === 'linkblock') {
             const reason = interaction.options.getString('reason');
             const channelId = interaction.channelId;
@@ -246,7 +254,7 @@ client.on('interactionCreate', async interaction => {
             await interaction.reply({ embeds: [confirmationEmbed] });
         }
 
-        // --- /broadcast ---
+        // --- /broadcast --- (Relatively fast, no deferral needed)
         if (commandName === 'broadcast') {
             const targetChannel = interaction.options.getChannel('channel');
             const messageContent = interaction.options.getString('message');
@@ -272,36 +280,37 @@ client.on('interactionCreate', async interaction => {
         // --- /online connect (Voice Join) ---
         if (commandName === 'online') {
             const vcChannel = interaction.options.getChannel('connect');
-            // Channel type 2 is a Voice Channel
+            // Channel type 2 is a Voice Channel (now deprecated, but 2 still works for now)
             if (!vcChannel || vcChannel.type !== 2) {
+                // FIX: If the channel is invalid, reply immediately (no deferral needed yet).
                 return interaction.reply({ content: '🚫 Select a valid voice channel.', ephemeral: true });
             }
 
-            await interaction.deferReply({ ephemeral: true });
+            // FIX: Defer reply placed immediately before the slow join operation.
+            // This is the correct placement to prevent the 10062 error for /online.
+            await interaction.deferReply({ ephemeral: true }); 
 
             try {
                 const connection = joinVoiceChannel({
                     channelId: vcChannel.id,
                     guildId: vcChannel.guild.id,
                     adapterCreator: vcChannel.guild.voiceAdapterCreator,
-                    selfMute: true, // Bot is muted
-                    selfDeaf: true, // Bot is deafened
+                    selfMute: true,
+                    selfDeaf: true,
                 });
                 
-                // Set up the connection state and monitor status
                 const player = createAudioPlayer();
                 connection.subscribe(player); 
 
-                // Wait for the connection to be ready (critical step for stability)
                 await entersState(connection, VoiceConnectionStatus.Ready, 30_000); 
 
+                // FIX: Use editReply() after deferring!
                 await interaction.editReply({ content: `✅ Connected to **${vcChannel.name}** as muted/deafened. **(Connection Stabilized)**` });
                 
                 // Handle disconnections gracefully
                 connection.on(VoiceConnectionStatus.Disconnected, async () => {
                     console.log(`🔊 Voice Disconnected from ${vcChannel.name}. Attempting to reconnect...`); 
                     try {
-                        // Attempt to reconnect within a short window
                         await Promise.race([
                             entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
                             entersState(connection, VoiceConnectionStatus.NearConnection, 5_000),
@@ -315,23 +324,28 @@ client.on('interactionCreate', async interaction => {
                 });
 
             } catch (err) {
-                // This catches the 'No compatible encryption modes' error if the Node.js version is still old
                 console.error('Voice connection failed:', err);
                 logToDiscord('🔴 VC Connection Failed', `Command: /online connect\nError: ${err.message}\nStack: ${err.stack}`, '#FF0000');
-                await interaction.editReply({ content: '❌ Failed to connect to VC. **HINT: If the error is "No compatible encryption modes," you must update your Node.js version to 18+ on the host.**' });
+                
+                // FIX: Use editReply() for error message after deferring!
+                await interaction.editReply({ content: '❌ Failed to connect to VC. **HINT: The environment or permissions may be incorrect.**' });
             }
         }
     } catch (error) {
-        // Catch interaction errors (like timed out interactions)
+        // Catch general interaction errors (e.g., if a previous deferral failed silently)
         console.error('❌ CRITICAL ERROR IN INTERACTION HANDLER:', error);
         logToDiscord('❌ INTERACTION HANDLER CRASH', `Command failed.\nError: ${error.message}\nStack: ${error.stack}`, '#8B0000');
+        
+        // This block tries to send a reply if none was sent or deferred previously.
         if (!interaction.replied && !interaction.deferred) {
             await interaction.reply({ content: '❌ An unexpected error occurred while processing this command.', ephemeral: true }).catch(e => console.error('Failed to send error reply:', e));
         }
+        // If it was deferred but failed later, the main try/catch handles the editReply failure.
     }
 });
 
-// --- 11. MESSAGE HANDLER (LINK DELETION) (Enhanced with Admin Bypass) ---
+// --- 11. MESSAGE HANDLER (LINK DELETION) ---
+// This section remains unchanged (it's correct)
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.inGuild()) return;
     const channelId = message.channel.id;
@@ -339,12 +353,12 @@ client.on('messageCreate', async (message) => {
 
     if (!customReason) return;
 
-    // IGNORE ADMINS/MODERATORS: Admins should be able to post links
+    // IGNORE ADMINS/MODERATORS
     if (message.member && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
         return;
     }
 
-    // Bypass if the message is only media/sticker, even if it contains a link-like mention in the description
+    // Bypass if the message is only media/sticker
     const isMediaOrPreview = message.attachments.size > 0 || message.stickers.size > 0 || message.embeds.length > 0;
     
     if (containsLink(message.content) && !isMediaOrPreview) {
