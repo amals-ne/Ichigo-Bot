@@ -1,4 +1,6 @@
 // --- 0. REQUIRED MODULES ---
+// Add this line near the start of your bot.js file
+console.log(`Node.js Version Detected: ${process.version}`);
 const express = require('express');
 const https = require('https');
 const app = express();
