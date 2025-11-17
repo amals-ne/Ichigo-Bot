@@ -85,11 +85,16 @@ async function logToDiscord(title, description, color) {
 // --- 5. LINK BLOCKER STORAGE ---
 const linkBlockedChannels = {};
 
-// --- 6. LINK DETECTION FUNCTION ---
+// --- 6. LINK DETECTION FUNCTION (FIXED FOR GIF BYPASS) ---
 const containsLink = (text) => {
     // Basic regex for common links and invite codes
     const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+|discord\.gg\/[^\s]+|\.[a-z]{2,4}\/)/i;
-    return urlRegex.test(text);
+    
+    // Check for official Discord CDN/Emoji links to bypass deletion
+    const isDiscordAsset = /https:\/\/cdn\.discordapp\.com\/(emojis|attachments|icons)\//i.test(text);
+
+    // Only return true if a link exists AND it is NOT a known Discord asset link
+    return urlRegex.test(text) && !isDiscordAsset;
 };
 
 // --- 7. SLASH COMMANDS ---
@@ -216,11 +221,6 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const { commandName } = interaction;
 
-        // --- FIX FOR UNKNOWN INTERACTION (10062) ---
-        // Defer non-instant commands immediately. /ping is fast, /linkblock and /broadcast are also fast.
-        // /online is the only one guaranteed to take time, so we will defer inside that block for better response control.
-        // For /linkblock and /broadcast, since they do not rely on external services, keeping them synchronous is fine.
-        
         // This admin check is redundant due to default_member_permissions but fine for backup.
         const isModCommand = ['linkblock', 'broadcast', 'online'].includes(interaction.commandName);
         if (isModCommand && !interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
@@ -369,7 +369,6 @@ client.on(Events.InteractionCreate, async interaction => {
             }
 
             // FIX: Defer reply placed immediately before the slow join operation.
-            // This is the correct placement to prevent the 10062 error for /online.
             await interaction.deferReply({ ephemeral: true }); 
 
             try {
@@ -456,8 +455,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// --- 11. MESSAGE HANDLER (LINK DELETION) ---
-// Enhanced with beautiful UI
+// --- 11. MESSAGE HANDLER (LINK DELETION) (FIXED FOR GIF BYPASS) ---
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.inGuild()) return;
     const channelId = message.channel.id;
@@ -470,10 +468,12 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // Bypass if the message is only media/sticker
-    const isMediaOrPreview = message.attachments.size > 0 || message.stickers.size > 0 || message.embeds.length > 0;
+    // Bypass if the message contains genuine attachments or stickers.
+    // containsLink in Section 6 handles the Discord GIF URL bypass.
+    const isAttachmentOrSticker = message.attachments.size > 0 || message.stickers.size > 0;
     
-    if (containsLink(message.content) && !isMediaOrPreview) {
+    // Check if the message contains a link (that is NOT a Discord asset) AND does not have an attachment/sticker
+    if (containsLink(message.content) && !isAttachmentOrSticker) {
         try { 
             await message.delete(); 
         } catch (err) { 
