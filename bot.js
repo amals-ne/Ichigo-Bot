@@ -5,6 +5,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0'; 
 
+// Ping server setup (Keeps Render host alive)
 app.get('/', (req, res) => res.send('Ichigo is online!'));
 app.listen(PORT, HOST, () => console.log(`Ping server running on http://${HOST}:${PORT}`));
 
@@ -19,7 +20,8 @@ const {
     REST, 
     Routes, 
     ApplicationCommandOptionType,
-    ActivityType
+    ActivityType,
+    PermissionFlagsBits, // Added for administrator check
 } = require('discord.js');
 const { 
     joinVoiceChannel, 
@@ -33,19 +35,19 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildVoiceStates,
+        GatewayIntentBits.MessageContent, // REQUIRED for link blocker
+        GatewayIntentBits.GuildVoiceStates, // REQUIRED for /online connect
     ],
 });
 
-// --- 4. DISCORD LOGGING SYSTEM ---
+// --- 4. DISCORD LOGGING SYSTEM (Enhanced for Fetching) ---
 const LOG_CHANNEL_ID = process.env.DISCORD_LOG_CHANNEL_ID;
 
 /**
- * Sends a formatted error log to the designated Discord channel.
+ * Sends a formatted error log to the designated Discord channel, reliably fetching the channel.
  * @param {string} title - The title of the embed (e.g., 'CRITICAL ERROR').
  * @param {string} description - The main content, usually the error stack or details.
- * @param {string} color - The hex color for the embed (e.g., '#FF0000' for red).
+ * @param {string} color - The hex color for the embed.
  */
 async function logToDiscord(title, description, color) {
     if (!LOG_CHANNEL_ID || !client.isReady()) {
@@ -57,19 +59,19 @@ async function logToDiscord(title, description, color) {
     const logEmbed = new EmbedBuilder()
         .setColor(color)
         .setTitle(title)
-        .setDescription(`\`\`\`\n${description.substring(0, 4000)}\n\`\`\``) // Truncate description for embed limit
+        .setDescription(`\`\`\`\n${description.substring(0, 4000)}\n\`\`\``)
         .setTimestamp()
         .setFooter({ text: client.user.tag });
 
     try {
-        const channel = client.channels.cache.get(LOG_CHANNEL_ID);
+        // Use .fetch() for more reliable access, especially during startup or in critical logs
+        const channel = client.channels.cache.get(LOG_CHANNEL_ID) || await client.channels.fetch(LOG_CHANNEL_ID); 
         if (channel) {
             await channel.send({ embeds: [logEmbed] });
         } else {
             console.error(`Could not find logging channel with ID: ${LOG_CHANNEL_ID}`);
         }
     } catch (err) {
-        // Fallback console log if sending the message fails
         console.error('Failed to send error log to Discord:', err);
     }
 }
@@ -79,16 +81,17 @@ const linkBlockedChannels = {};
 
 // --- 6. LINK DETECTION FUNCTION ---
 const containsLink = (text) => {
+    // Basic regex for common links and invite codes
     const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+|discord\.gg\/[^\s]+|\.[a-z]{2,4}\/)/i;
     return urlRegex.test(text);
 };
 
-// --- 7. SLASH COMMANDS (Commands array remains unchanged) ---
+// --- 7. SLASH COMMANDS ---
 const commands = [
     {
         name: 'linkblock',
         description: 'Blocks all links in the current channel and sets a custom warning message.',
-        default_member_permissions: '8', 
+        default_member_permissions: PermissionFlagsBits.Administrator.toString(), // Use PermissionFlagsBits
         options: [
             { name: 'reason', description: 'The custom warning message to show users who post a link.', type: ApplicationCommandOptionType.String, required: true },
         ],
@@ -96,7 +99,7 @@ const commands = [
     {
         name: 'broadcast',
         description: 'Sends an official-looking announcement embed to a specified channel.',
-        default_member_permissions: '8',
+        default_member_permissions: PermissionFlagsBits.Administrator.toString(),
         options: [
             { name: 'channel', description: 'The channel to send the broadcast to.', type: ApplicationCommandOptionType.Channel, required: true },
             { name: 'message', description: 'The content of the announcement.', type: ApplicationCommandOptionType.String, required: true },
@@ -109,18 +112,19 @@ const commands = [
     {
         name: 'online',
         description: 'Connect bot to a voice channel as muted/deafened.',
-        default_member_permissions: '8',
+        default_member_permissions: PermissionFlagsBits.Administrator.toString(),
         options: [
             { name: 'connect', description: 'Voice channel to join', type: ApplicationCommandOptionType.Channel, required: true },
         ],
     },
 ];
 
-// --- 8. REGISTER COMMANDS (Updated with logging) ---
+// --- 8. REGISTER COMMANDS ---
 async function registerCommands() {
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
         console.log('Refreshing application (/) commands.');
+        // Assuming DISCORD_GUILD_ID is used for guild-specific commands (faster updates)
         await rest.put(
             Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, process.env.DISCORD_GUILD_ID),
             { body: commands },
@@ -133,14 +137,16 @@ async function registerCommands() {
 }
 
 // ----------------------------------------------------------------------
-//                        *** ERROR DEBUGGING & LOGGING (Updated) ***
+//                    *** ERROR DEBUGGING & LOGGING (CRITICAL) ***
 // ----------------------------------------------------------------------
 
-// *** CRITICAL PROCESS HANDLERS (Now logs to Discord) ***
+// *** CRITICAL PROCESS HANDLERS (Now logs and exits) ***
 process.on('uncaughtException', (error, origin) => {
     const message = `UNCAUGHT EXCEPTION: ${error.stack || error.message}\nOrigin: ${origin}`;
     console.error(`🚨 ${message}`);
     logToDiscord('🚨 CRITICAL: UNCAUGHT EXCEPTION', message, '#8B0000');
+    // Best practice: Exit after an uncaught exception to ensure a clean restart
+    setTimeout(() => process.exit(1), 5000); 
 });
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -149,7 +155,7 @@ process.on('unhandledRejection', (reason, promise) => {
     logToDiscord('⚠️ WARNING: UNHANDLED REJECTION', message, '#FFA500');
 });
 
-// *** DISCORD CONNECTION LOGGING (Now logs to Discord) ***
+// *** DISCORD CONNECTION LOGGING ***
 client.on('error', error => {
     console.error('🔴 DISCORD ERROR:', error);
     logToDiscord('🔴 DISCORD ERROR', error.stack || error.message, '#FF0000');
@@ -161,7 +167,6 @@ client.on('disconnect', (event) => {
     logToDiscord('❌ DISCORD DISCONNECT', message, '#FF4500');
 });
 
-// Other console logs remain for local testing
 client.on('warn', info => console.log('🔶 DISCORD WARNING:', info));
 client.on('reconnecting', () => {
     console.log('🔄 DISCORD RECONNECTING...');
@@ -169,7 +174,7 @@ client.on('reconnecting', () => {
 });
 // ----------------------------------------------------------------------
 
-// --- 9. READY EVENT (Updated for Self-Ping and Logger) ---
+// --- 9. READY EVENT ---
 client.once('ready', () => {
     console.log(`🤖 Logged in as ${client.user.tag}!`);
     logToDiscord('✅ BOT ONLINE', `Logged in successfully! Latency: ${client.ws.ping}ms`, '#32CD32');
@@ -184,32 +189,31 @@ client.once('ready', () => {
     setInterval(() => {
         https.get('https://ichigo-bot.onrender.com', (res) => {
             if (res.statusCode !== 200) {
-                // Log non-200 status codes (like 502/404) to Discord
-                const message = `Self-Ping failed with status code: ${res.statusCode}. This suggests a potential service instability or proxy issue.`;
+                const message = `Self-Ping failed with status code: ${res.statusCode}.`;
                 console.error(`Self-Ping Error: ${message}`);
                 logToDiscord('🚨 HOSTING ALERT (Self-Ping)', message, '#FFD700');
             }
         }).on('error', (err) => {
-            const message = `Self-Ping failed to connect: ${err.message}. This is a critical host communication failure.`;
+            const message = `Self-Ping failed to connect: ${err.message}.`;
             console.error(`Self-Ping Error: ${message}`);
             logToDiscord('🚨 CRITICAL HOSTING FAILURE', message, '#FF4500');
         });
-    }, 300000); // Ping every 5 minutes (300,000 milliseconds)
+    }, 300000); // Ping every 5 minutes
 });
 
-// --- 10. INTERACTION HANDLER (Updated with Discord Logging) ---
+// --- 10. INTERACTION HANDLER ---
 client.on('interactionCreate', async interaction => {
     try {
         if (!interaction.isCommand()) return;
         
+        // Command checks use the default_member_permissions set in the command definition, 
+        // which is handled by Discord. This manual check is a good secondary layer.
         const isModCommand = ['linkblock', 'broadcast', 'online'].includes(interaction.commandName);
-        if (isModCommand && !interaction.memberPermissions.has('Administrator')) {
+        if (isModCommand && !interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
             return interaction.reply({ content: '🚫 You must have Administrator permissions to use this command.', ephemeral: true });
         }
         
         const { commandName } = interaction;
-
-        // ... (ping, linkblock, broadcast commands remain the same, no complex try/catch needed) ...
 
         // --- /ping ---
         if (commandName === 'ping') {
@@ -266,6 +270,7 @@ client.on('interactionCreate', async interaction => {
         // --- /online connect (Voice Join) ---
         if (commandName === 'online') {
             const vcChannel = interaction.options.getChannel('connect');
+            // Channel type 2 is a Voice Channel
             if (!vcChannel || vcChannel.type !== 2) {
                 return interaction.reply({ content: '🚫 Select a valid voice channel.', ephemeral: true });
             }
@@ -277,21 +282,24 @@ client.on('interactionCreate', async interaction => {
                     channelId: vcChannel.id,
                     guildId: vcChannel.guild.id,
                     adapterCreator: vcChannel.guild.voiceAdapterCreator,
-                    selfMute: true,
-                    selfDeaf: true,
+                    selfMute: true, // Bot is muted
+                    selfDeaf: true, // Bot is deafened
                 });
                 
+                // Set up the connection state and monitor status
                 const player = createAudioPlayer();
                 connection.subscribe(player); 
 
+                // Wait for the connection to be ready (critical step for stability)
                 await entersState(connection, VoiceConnectionStatus.Ready, 30_000); 
 
-                await interaction.editReply({ content: `✅ Connected to ${vcChannel.name} as muted/deafened. **(Connection Stabilized)**` });
+                await interaction.editReply({ content: `✅ Connected to **${vcChannel.name}** as muted/deafened. **(Connection Stabilized)**` });
                 
+                // Handle disconnections gracefully
                 connection.on(VoiceConnectionStatus.Disconnected, async () => {
-                    // This log is not critical enough to send to Discord immediately, console is fine
                     console.log(`🔊 Voice Disconnected from ${vcChannel.name}. Attempting to reconnect...`); 
                     try {
+                        // Attempt to reconnect within a short window
                         await Promise.race([
                             entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
                             entersState(connection, VoiceConnectionStatus.NearConnection, 5_000),
@@ -300,18 +308,19 @@ client.on('interactionCreate', async interaction => {
                     } catch (error) {
                         connection.destroy();
                         console.error(`🔊 VOICE ERROR: Connection to ${vcChannel.name} failed to reconnect and was destroyed.`);
-                        logToDiscord('🔴 VOICE RECONNECT FAILURE', `Connection to ${vcChannel.name} failed to reconnect.\nError: ${error.message}`, '#FF4500');
+                        logToDiscord('🔴 VOICE RECONNECT FAILURE', `Connection to ${vcChannel.name} failed to reconnect and was destroyed.\nError: ${error.message}`, '#FF4500');
                     }
                 });
 
             } catch (err) {
+                // This catches the 'No compatible encryption modes' error if the Node.js version is still old
                 console.error('Voice connection failed:', err);
                 logToDiscord('🔴 VC Connection Failed', `Command: /online connect\nError: ${err.message}\nStack: ${err.stack}`, '#FF0000');
-                await interaction.editReply({ content: '❌ Failed to connect to VC. Check bot permissions (Connect & Speak) and ensure you added the GuildVoiceStates intent.' });
+                await interaction.editReply({ content: '❌ Failed to connect to VC. **HINT: If the error is "No compatible encryption modes," you must update your Node.js version to 18+ on the host.**' });
             }
         }
     } catch (error) {
-        // This usually catches a timed-out interaction (10062)
+        // Catch interaction errors (like timed out interactions)
         console.error('❌ CRITICAL ERROR IN INTERACTION HANDLER:', error);
         logToDiscord('❌ INTERACTION HANDLER CRASH', `Command failed.\nError: ${error.message}\nStack: ${error.stack}`, '#8B0000');
         if (!interaction.replied && !interaction.deferred) {
@@ -320,7 +329,7 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// --- 11. MESSAGE HANDLER (LINK DELETION) (Updated with Discord Logging) ---
+// --- 11. MESSAGE HANDLER (LINK DELETION) (Enhanced with Admin Bypass) ---
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.inGuild()) return;
     const channelId = message.channel.id;
@@ -328,18 +337,18 @@ client.on('messageCreate', async (message) => {
 
     if (!customReason) return;
 
-    // FIX: Bypass link check for any media or preview (attachments, stickers, or Discord embeds/GIFs)
-    const isMediaOrPreview = message.attachments.size > 0 || message.stickers.size > 0 || message.embeds.length > 0;
-    
-    if (isMediaOrPreview) {
+    // IGNORE ADMINS/MODERATORS: Admins should be able to post links
+    if (message.member && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
         return;
     }
 
-    if (containsLink(message.content)) {
+    // Bypass if the message is only media/sticker, even if it contains a link-like mention in the description
+    const isMediaOrPreview = message.attachments.size > 0 || message.stickers.size > 0 || message.embeds.length > 0;
+    
+    if (containsLink(message.content) && !isMediaOrPreview) {
         try { 
             await message.delete(); 
         } catch (err) { 
-            // Only log permission failure to delete to Discord, as this is a recurring issue
             console.error('Failed to delete link message (permissions issue?):', err);
             logToDiscord('🔶 Link Delete Permission Alert', `Bot failed to delete a link message in <#${message.channel.id}>. Check 'Manage Messages' permission.\nError: ${err.message}`, '#FF8C00');
             return; 
@@ -348,16 +357,14 @@ client.on('messageCreate', async (message) => {
         const warningEmbed = new EmbedBuilder()
             .setColor('#FF0000')
             .setTitle('⛔ WARNING: Link Deletion')
-            .setDescription(`**❌ Link Posting Violation ❌**\n\n**Do not post links in this channel!**\n**Action:** Deleted.\n**Channel Note:**\n>>> ${customReason}\n*Thank you for respecting the server rules.*`)
+            .setDescription(`**❌ Link Posting Violation ❌**\n<@${message.author.id}>, do not post links in this channel!\n\n**Channel Note:**\n>>> ${customReason}\n*This warning will self-delete in 5 seconds.*`)
             .setAuthor({ name: message.author.tag, iconURL: message.author.displayAvatarURL() })
-            .setTimestamp()
-            .setFooter({ text: `This warning will self-delete in 5 seconds.` });
+            .setTimestamp();
 
         try {
             const warningMessage = await message.channel.send({ content: `<@${message.author.id}>`, embeds: [warningEmbed] });
             setTimeout(() => warningMessage.delete().catch(err => console.error('Failed to delete warning message:', err)), 5000);
         } catch (error) {
-            // Only console log for warning failures, as Discord is already down if this happens
             console.error(`Failed to send warning:`, error);
         }
     }
