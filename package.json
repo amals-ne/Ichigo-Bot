@@ -4,17 +4,20 @@
   "description": "Ichigo Discord bot with link blocker, broadcast, VC connect, and uptime ping server",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node bot.js",
+    "postinstall": "npm rebuild @discordjs/voice" 
   },
   "author": "Amal s",
   "license": "ISC",
   "engines": {
-    "node": ">=24"
+    "node": "24.x" 
   },
   "dependencies": {
     "discord.js": "^14.23.2",
     "@discordjs/voice": "^0.16.1",
     "express": "^4.19.2",
-    "dotenv": "^17.2.3"
+    "dotenv": "^17.2.3",
+    "https": "^1.0.0",
+    "libsodium-wrappers": "^0.7.13" 
   }
 }
