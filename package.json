@@ -13,9 +13,9 @@
   },
   "dependencies": {
     "discord.js": "^14.23.2",
-    "@discordjs/voice": "^0.16.1", <--- Updated to match your desired version
-    "express": "^4.19.2", <--- Updated to match your desired version
+    "@discordjs/voice": "^0.16.1" 
+    "express": "^4.19.2"
     "dotenv": "^17.2.3",
-    "https": "^1.0.0" <--- Added the missing dependency
+    "https": "^1.0.0" 
   }
 }
